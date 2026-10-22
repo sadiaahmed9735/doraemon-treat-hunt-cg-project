@@ -1,15 +1,52 @@
 #define GL_SILENCE_DEPRECATION
-#include <GLUt/glut.h>
+#ifdef __APPLE__
+#include <GLUT/glut.h>
+#else
+#include <GL/glut.h>
+#endif
+#ifdef _WIN32
+#include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
+#endif
 #include <math.h>
 #include <iostream>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #define TOTAL_OBSTACLES 4
 #define TOTAL_FIRES 3
 #define TOTAL_STONES 3
+#define TOTAL_PARTICLES 300
+
+// World / character constants
+const float GROUND_Y = -7.5f;          // charY when standing on the ground
+const float CHAR_START_X = -9.5f;
+const float CHAR_HITBOX_OFFSET_X = 4.75f; // charX -> hitbox left edge on screen
+const float CHAR_HITBOX_SIZE = 0.9f;
+const float SCROLL_RIGHT_X = -6.0f;    // charX where the world starts scrolling
+const float SCROLL_LEFT_X = -5.0f;
+const float MAX_CHAR_X = 3.2f;
+const float MIN_CHAR_X = -12.5f;
+const float SCREEN_LEFT = -9.5f;
+const float SCREEN_RIGHT = 9.5f;
+const float SCREEN_BOTTOM = -10.0f;
+const float SCREEN_TOP = 10.0f;
+const int   TOTAL_CAKES = 5;
+
+// Doraemon() model coordinates (drawn at DORAEMON_SCALE, pivot CHAR_HITBOX_OFFSET_X)
+const float DORAEMON_SCALE = 0.5f;
+const float DORAEMON_HEAD_X = 5.46f;     // head top
+const float DORAEMON_HEAD_TOP = 9.52f;
+const float DORAEMON_BODY_LEFT = 3.6f;   // body box used for obstacle collision
+const float DORAEMON_BODY_RIGHT = 7.5f;
+const float DORAEMON_BODY_BOTTOM = 1.9f;
+const float DORAEMON_BODY_TOP = 9.3f;
 
 //Character Movement
-float charX = -9.7f;
-float charY = -7.5f;
+float charX = CHAR_START_X;
+float charY = GROUND_Y;
 bool moving = false;
 bool jumping = false;
 int facing = 1;
@@ -19,13 +56,20 @@ float jumpSpeed = 0.1f;
 
 float _moveSpeed = 0.2f;
 float _legSwingSpeed = 2.0f;
-float _jumpSpeed = 0.2f;
 float _legResetSpeed = 2.0f;
 float _maxLegAngle = 3.0f;
 
+// Gravity jump (+ double jump)
+float velY = 0.0f;
+int jumpsUsed = 0;
+const float GRAVITY = 0.012f;
+const float JUMP_VELOCITY = 0.36f;
+const float DOUBLE_JUMP_VELOCITY = 0.30f;
+const int   MAX_JUMPS = 2;
+
 //Scene Movement
 float worldX = 0.0f;
-int sceneCount = 1;
+int sceneCount = 0;
 int totalScenes = 4;
 float sceneWidth = 23.0f;
 
@@ -51,14 +95,63 @@ bool gameWon = false;
 bool showHome = true;
 
 // Button positions
-float buttonWidth = 3.5f;
-float buttonHeight = 0.7f;
-float mainMenuX = -1.7f, mainMenuY = -0.5f;
-float restartX = -1.7f, restartY = -1.5f;
+float buttonWidth = 3.6f;
+float buttonHeight = 0.75f;
+float nextLevelX = -1.8f, nextLevelY = -0.2f;
+float mainMenuX = -1.8f, mainMenuY = -1.2f;
+float restartX = -1.8f, restartY = -2.2f;
 
-bool level3Started = false;
-bool level2Started = false;
-bool level1Started = false;
+// Score
+const int CAKE_POINTS = 10;
+const int TIME_BONUS_SECONDS = 60;   // finish faster than this for a bonus
+const int TIME_BONUS_PER_SECOND = 2;
+const char* HIGHSCORE_FILE = "highscore.txt";
+int score = 0;
+int levelStartScore = 0;             // score is restored to this on Restart
+int highScore = 0;
+int lastTimeBonus = 0;
+int levelFrames = 0;                 // 60 frames = 1 second
+bool paused = false;
+
+// Invincibility after a hit
+const int INVINCIBLE_FRAMES = 45;
+int invincibleTimer = 0;
+float hitFlash = 0.0f;               // red screen flash alpha
+
+// Take-copter gadget
+const int COPTER_FRAMES = 300;       // ~5 seconds of flying
+const float COPTER_LIFT = 0.15f;
+const float COPTER_SINK = 0.05f;
+const float COPTER_MAX_Y = 2.0f;
+float copterX, copterY;
+bool copterPicked = false;
+int copterTimer = 0;
+bool upHeld = false;
+bool leftHeld = false;
+bool rightHeld = false;
+float propellerAngle = 0.0f;
+
+// Mouse enemy (Doraemon is scared of mice)
+const float MOUSE_SPEED = 0.06f;
+const float MOUSE_SCARE_DIST = 2.5f;
+const int SCARED_FRAMES = 45;
+const float SCARED_SPEED_FACTOR = 1.6f;   // runs away faster than walking
+const int SCARE_COOLDOWN_FRAMES = 180;  // after a scare Doraemon can walk past the mouse
+float mouseX, mouseY;
+int mouseDir = -1;
+float mouseLeftBound, mouseRightBound;
+int scaredTimer = 0;
+int scareCooldown = 0;
+int scaredDir = 1;
+
+// Particles
+struct Particle {
+    float x, y;       // world coordinates (screen x = x + worldX)
+    float vx, vy;
+    float life;       // 1 -> 0
+    float r, g, b;
+};
+Particle particles[TOTAL_PARTICLES];
 
 // Position
 float obstaclePosX[TOTAL_OBSTACLES];
@@ -81,9 +174,6 @@ float obstacleTopBound[TOTAL_OBSTACLES];
 float obstacleBottomBound[TOTAL_OBSTACLES];
 int obstacleType[TOTAL_OBSTACLES];
 
-// Size for collision
-float obstacleWidth  = 2.0f;
-float obstacleHeight = 2.0f;
 
 bool fireHit[TOTAL_FIRES];
 float fireX[TOTAL_FIRES];
@@ -94,6 +184,10 @@ float fireTimer[TOTAL_FIRES];
 
 const float FIRE_ON_TIME  = 60.0f;   // frames (~1 sec)
 const float FIRE_OFF_TIME = 60.0f;
+
+// Hazards keep this far (x distance) from dorayaki and hearts
+const float HAZARD_CLEARANCE = 3.0f;
+const float OBSTACLE_SLIDE_RANGE = 2.5f;
 
 // SignBoard (per obstacle) rotation
 float signAngle[TOTAL_OBSTACLES];
@@ -109,6 +203,107 @@ const float STONE_W = 1.0f;   // width in world units
 const float STONE_H = 1.0f;   // height in world
 
 
+// ---------- Sound ----------
+// Mac: built-in system sounds via afplay. Windows: sounds/<name>.wav via PlaySound.
+void playSound(const char* name)
+{
+#ifdef __APPLE__
+    const char* file = "Pop";
+    if (strcmp(name, "collect") == 0) file = "Glass";
+    else if (strcmp(name, "hit") == 0) file = "Basso";
+    else if (strcmp(name, "levelup") == 0) file = "Hero";
+    else if (strcmp(name, "gameover") == 0) file = "Sosumi";
+    else if (strcmp(name, "gadget") == 0) file = "Submarine";
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "afplay /System/Library/Sounds/%s.aiff >/dev/null 2>&1 &", file);
+    system(cmd);
+#elif defined(_WIN32)
+    char path[64];
+    snprintf(path, sizeof(path), "sounds\\%s.wav", name);
+    PlaySoundA(path, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+#else
+    (void)name;
+#endif
+}
+
+// ---------- High score ----------
+void loadHighScore()
+{
+    FILE* f = fopen(HIGHSCORE_FILE, "r");
+    if (!f) return;
+    if (fscanf(f, "%d", &highScore) != 1) highScore = 0;
+    fclose(f);
+}
+
+void saveHighScore()
+{
+    if (score <= highScore) return;
+    highScore = score;
+    FILE* f = fopen(HIGHSCORE_FILE, "w");
+    if (!f) return;
+    fprintf(f, "%d\n", highScore);
+    fclose(f);
+}
+
+// ---------- Particles ----------
+void clearParticles()
+{
+    for (int i = 0; i < TOTAL_PARTICLES; i++) particles[i].life = 0.0f;
+}
+
+// screenX/screenY are screen coordinates, stored in world space so they scroll with the level
+void spawnParticles(float screenX, float screenY, int count, float r, float g, float b, float speed)
+{
+    for (int i = 0; i < TOTAL_PARTICLES && count > 0; i++) {
+        if (particles[i].life > 0.0f) continue;
+        float angle = (rand() / (float)RAND_MAX) * 2.0f * 3.1416f;
+        float s = speed * (0.4f + 0.6f * rand() / (float)RAND_MAX);
+        particles[i].x = screenX - worldX;
+        particles[i].y = screenY;
+        particles[i].vx = s * cos(angle);
+        particles[i].vy = s * sin(angle);
+        particles[i].life = 1.0f;
+        particles[i].r = r; particles[i].g = g; particles[i].b = b;
+        count--;
+    }
+}
+
+void updateParticles()
+{
+    for (int i = 0; i < TOTAL_PARTICLES; i++) {
+        if (particles[i].life <= 0.0f) continue;
+        particles[i].x += particles[i].vx;
+        particles[i].y += particles[i].vy;
+        particles[i].vy -= 0.004f;
+        particles[i].life -= 0.025f;
+    }
+}
+
+void drawParticles()
+{
+    glPushAttrib(GL_LIGHTING_BIT | GL_POINT_BIT);
+    glDisable(GL_LIGHTING);
+    glPointSize(5.0f);
+    glBegin(GL_POINTS);
+    for (int i = 0; i < TOTAL_PARTICLES; i++) {
+        if (particles[i].life <= 0.0f) continue;
+        glColor4f(particles[i].r, particles[i].g, particles[i].b, particles[i].life);
+        glVertex2f(particles[i].x + worldX, particles[i].y);
+    }
+    glEnd();
+    glPopAttrib();
+}
+
+// ---------- Damage ----------
+void takeHit()
+{
+    if (invincibleTimer > 0) return;
+    lives--;
+    invincibleTimer = INVINCIBLE_FRAMES;
+    hitFlash = 0.45f;
+    spawnParticles(charX + CHAR_HITBOX_OFFSET_X + 0.45f, charY + 3.0f, 25, 1.0f, 0.1f, 0.1f, 0.15f);
+    playSound("hit");
+}
 
 
 void drawText(float x, float y, const char* text) {
@@ -195,42 +390,156 @@ void Doracake()
     glFlush();
 }
 
+// Home screen layout (also used by mouseClick)
+const float HOME_BTN_X = -2.6f;
+const float HOME_BTN_W = 5.2f;
+const float HOME_BTN_H = 1.1f;
+const float HOME_BTN_TOP[3] = { 3.4f, 1.9f, 0.4f };
+
+void Doraemon();
+void drawTextCentered(float cx, float y, const char* text, void* font);
+
+void fillCircle(float cx, float cy, float rx, float ry)
+{
+    glBegin(GL_POLYGON);
+    for (int i = 0; i < 40; i++) {
+        float a = 2.0f * 3.1416f * i / 40;
+        glVertex2f(cx + rx * cos(a), cy + ry * sin(a));
+    }
+    glEnd();
+}
+
+void drawCloud(float x, float y, float s)
+{
+    glColor4f(1.0f, 1.0f, 1.0f, 0.9f);
+    fillCircle(x, y, 0.9f * s, 0.55f * s);
+    fillCircle(x + 0.8f * s, y + 0.2f * s, 0.75f * s, 0.6f * s);
+    fillCircle(x - 0.8f * s, y - 0.05f * s, 0.65f * s, 0.45f * s);
+    fillCircle(x + 1.5f * s, y - 0.05f * s, 0.6f * s, 0.4f * s);
+}
+
+void drawRect(float x1, float y1, float x2, float y2)
+{
+    glBegin(GL_QUADS);
+        glVertex2f(x1, y1); glVertex2f(x2, y1);
+        glVertex2f(x2, y2); glVertex2f(x1, y2);
+    glEnd();
+}
+
+void drawRectOutline(float x1, float y1, float x2, float y2, float width)
+{
+    glLineWidth(width);
+    glBegin(GL_LINE_LOOP);
+        glVertex2f(x1, y1); glVertex2f(x2, y1);
+        glVertex2f(x2, y2); glVertex2f(x1, y2);
+    glEnd();
+}
+
+void drawHomeButton(int i, const char* label, const char* subtitle)
+{
+    float x1 = HOME_BTN_X, x2 = HOME_BTN_X + HOME_BTN_W;
+    float y2 = HOME_BTN_TOP[i], y1 = y2 - HOME_BTN_H;
+
+    glColor4f(0.0f, 0.0f, 0.0f, 0.25f);          // shadow
+    drawRect(x1 + 0.12f, y1 - 0.15f, x2 + 0.12f, y2 - 0.15f);
+
+    glColor3f(0.11f, 0.47f, 0.85f);              // Doraemon blue
+    drawRect(x1, y1, x2, y2);
+    glColor3f(0.25f, 0.6f, 0.95f);               // lighter top half
+    drawRect(x1, y1 + HOME_BTN_H * 0.55f, x2, y2);
+
+    glColor3f(1.0f, 1.0f, 1.0f);
+    drawRectOutline(x1, y1, x2, y2, 2.5f);
+
+    drawTextCentered(0.0f, y2 - 0.5f, label, GLUT_BITMAP_HELVETICA_18);
+    glColor3f(0.85f, 0.93f, 1.0f);
+    drawTextCentered(0.0f, y2 - 0.9f, subtitle, GLUT_BITMAP_HELVETICA_12);
+}
+
 void homeScreen()
 {
+    glPushAttrib(GL_ENABLE_BIT);
+    glDisable(GL_LIGHTING);       // levels leave lighting on, which washes out the menu colors
+    glDisable(GL_DEPTH_TEST);
 
-    // Title
-    glColor3f(0.1f, 0.1f, 0.1f);
-    drawText(-2.5f, 6.0f, "DORAEMON'S TREAT HUNT");
+    // Sky gradient
+    glBegin(GL_QUADS);
+        glColor3f(0.25f, 0.6f, 0.95f);
+        glVertex2f(SCREEN_LEFT, SCREEN_TOP); glVertex2f(SCREEN_RIGHT, SCREEN_TOP);
+        glColor3f(0.7f, 0.9f, 1.0f);
+        glVertex2f(SCREEN_RIGHT, -7.0f); glVertex2f(SCREEN_LEFT, -7.0f);
+    glEnd();
 
+    // Grass
+    glColor3f(0.45f, 0.75f, 0.35f);
+    drawRect(SCREEN_LEFT, SCREEN_BOTTOM, SCREEN_RIGHT, -7.0f);
+    glColor3f(0.35f, 0.65f, 0.28f);
+    drawRect(SCREEN_LEFT, -7.25f, SCREEN_RIGHT, -7.0f);
+
+    drawCloud(-6.8f, 8.3f, 1.0f);
+    drawCloud(6.3f, 8.7f, 0.8f);
+    drawCloud(7.2f, 4.2f, 0.6f);
+    drawCloud(-7.8f, 3.6f, 0.55f);
+
+    // Title banner
+    glColor4f(0.0f, 0.0f, 0.0f, 0.25f);
+    drawRect(-5.85f, 5.15f, 6.15f, 7.35f);
+    glColor3f(0.98f, 0.98f, 1.0f);               // white banner
+    drawRect(-6.0f, 5.3f, 6.0f, 7.5f);
+    glColor3f(0.11f, 0.47f, 0.85f);              // Doraemon blue border
+    drawRectOutline(-6.0f, 5.3f, 6.0f, 7.5f, 4.0f);
+
+    glColor3f(0.05f, 0.3f, 0.65f);
+    drawTextCentered(0.0f, 6.5f, "DORAEMON'S TREAT HUNT", GLUT_BITMAP_TIMES_ROMAN_24);
+    glColor3f(0.85f, 0.45f, 0.1f);
+    drawTextCentered(0.0f, 5.75f, "Collect 5 dorayaki in every level!", GLUT_BITMAP_HELVETICA_18);
+
+    // Level buttons
+    drawHomeButton(0, "LEVEL 1", "Sunny Day");
+    drawHomeButton(1, "LEVEL 2", "Sunset");
+    drawHomeButton(2, "LEVEL 3", "Night");
+
+    // High score pill
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "High Score: %d", highScore);
+    glColor4f(1.0f, 1.0f, 1.0f, 0.75f);
+    drawRect(-2.0f, -2.0f, 2.0f, -1.2f);
+    glColor3f(0.9f, 0.6f, 0.1f);
+    drawRectOutline(-2.0f, -2.0f, 2.0f, -1.2f, 2.0f);
+    glColor3f(0.15f, 0.15f, 0.15f);
+    drawTextCentered(0.0f, -1.75f, buffer, GLUT_BITMAP_HELVETICA_18);
+
+    // Controls panel
+    glColor4f(0.05f, 0.1f, 0.25f, 0.85f);
+    drawRect(-4.6f, -6.6f, 4.6f, -2.7f);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    drawRectOutline(-4.6f, -6.6f, 4.6f, -2.7f, 2.0f);
+    glColor3f(1.0f, 0.85f, 0.2f);
+    drawTextCentered(0.0f, -3.4f, "HOW TO PLAY", GLUT_BITMAP_TIMES_ROMAN_24);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    drawTextCentered(0.0f, -4.3f, "Arrows : move & jump   (Up twice = double jump)", GLUT_BITMAP_HELVETICA_18);
+    drawTextCentered(0.0f, -5.0f, "P : pause     Esc : quit     1 / 2 / 3 : start", GLUT_BITMAP_HELVETICA_18);
+    glColor3f(0.75f, 0.85f, 1.0f);
+    drawTextCentered(0.0f, -5.8f, "Grab the Take-copter to fly.  Watch out for the mouse!", GLUT_BITMAP_HELVETICA_18);
+
+    // Doraemon on the left
     glPushMatrix();
-        glTranslatef(-6.0f, 3.0f, 0.0f);
-        glScalef(0.8f, 1.5f, 0.5f);
-        Doracake();
+        glTranslatef(-10.6f, -8.1f, 0.0f);
+        glScalef(0.7f, 0.7f, 1.0f);
+        Doraemon();
     glPopMatrix();
 
-    glPushMatrix();
-        glTranslatef(-2.5f, -4.0f, 0.0f);
-         glScalef(0.8f, 1.5f, 0.5f);
-        Doracake();
-    glPopMatrix();
+    // Dorayaki on the right
+    float cakePos[3][2] = { { 6.9f, -1.8f }, { 7.9f, -4.1f }, { 6.7f, -6.0f } };
+    for (int i = 0; i < 3; i++) {
+        glPushMatrix();
+            glTranslatef(cakePos[i][0], cakePos[i][1], 0.0f);
+            glScalef(0.6f, 1.1f, 1.0f);
+            Doracake();
+        glPopMatrix();
+    }
 
-    glPushMatrix();
-        glTranslatef(3.0f, 3.5f, 0.0f);
-         glScalef(0.8f, 1.5f, 0.5f);
-        Doracake();
-    glPopMatrix();
-
-    glPushMatrix();
-        glTranslatef(6.0f, -4.2f, 0.0f);
-         glScalef(0.8f, 1.5f, 0.5f);
-        Doracake();
-    glPopMatrix();
-
-
-    // Buttons
-    drawButton(-2.0f, 3.0f, 4.0f, 1.2f, "LEVEL 1");
-    drawButton(-2.0f, 1.0f, 4.0f, 1.2f, "LEVEL 2");
-    drawButton(-2.0f, -1.0f, 4.0f, 1.2f, "LEVEL 3");
+    glPopAttrib();
 
     glFlush();
 
@@ -239,41 +548,93 @@ void homeScreen()
 }
 
 
+// Width of a bitmap string in world units (window pixels -> gluOrtho2D units)
+float textWidth(void* font, const char* text)
+{
+    int px = glutBitmapLength(font, (const unsigned char*)text);
+    return px * (SCREEN_RIGHT - SCREEN_LEFT) / glutGet(GLUT_WINDOW_WIDTH);
+}
+
+void drawTextFont(float x, float y, const char* text, void* font)
+{
+    glRasterPos2f(x, y);
+    for (int i = 0; text[i] != '\0'; i++)
+        glutBitmapCharacter(font, text[i]);
+}
+
+void drawTextCentered(float cx, float y, const char* text, void* font)
+{
+    drawTextFont(cx - textWidth(font, text) / 2.0f, y, text, font);
+}
+
+void drawPanelButton(float x, float y, const char* label, float r, float g, float b)
+{
+    glColor3f(r, g, b);
+    glBegin(GL_QUADS);
+        glVertex2f(x, y);
+        glVertex2f(x + buttonWidth, y);
+        glVertex2f(x + buttonWidth, y + buttonHeight);
+        glVertex2f(x, y + buttonHeight);
+    glEnd();
+
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP);
+        glVertex2f(x, y);
+        glVertex2f(x + buttonWidth, y);
+        glVertex2f(x + buttonWidth, y + buttonHeight);
+        glVertex2f(x, y + buttonHeight);
+    glEnd();
+
+    drawTextCentered(x + buttonWidth / 2.0f, y + buttonHeight / 2.0f - 0.15f, label, GLUT_BITMAP_HELVETICA_18);
+}
+
 void drawEndScreen() {
-     if (!showEndScreen) return;
-    // Dark semi-transparent background
-    glColor4f(0, 0, 0, 0.7f);
+    if (!showEndScreen) return;
+
+    const float panelL = -5.0f, panelR = 5.0f, panelB = -3.6f, panelT = 3.6f;
+
+    // Panel background + border
+    glColor4f(0.05f, 0.05f, 0.12f, 0.94f);
     glBegin(GL_QUADS);
-        glVertex2f(-5, -3); glVertex2f(5, -3);
-        glVertex2f(5, 3); glVertex2f(-5, 3);
+        glVertex2f(panelL, panelB); glVertex2f(panelR, panelB);
+        glVertex2f(panelR, panelT); glVertex2f(panelL, panelT);
+    glEnd();
+    glColor3f(1.0f, 0.85f, 0.2f);
+    glLineWidth(3.0f);
+    glBegin(GL_LINE_LOOP);
+        glVertex2f(panelL, panelB); glVertex2f(panelR, panelB);
+        glVertex2f(panelR, panelT); glVertex2f(panelL, panelT);
     glEnd();
 
-    // Message
-    glColor3f(0.5,0.5,0.5);
-    if (gameWon) drawText(-1.0f, 1.0f, "You Win!");
-    else drawText(-1.0f, 1.0f, "Game Over");
+    // Title
+    bool hasNextLevel = gameWon && currentLevel < totalLevels;
+    if (gameWon) glColor3f(1.0f, 0.85f, 0.2f);
+    else glColor3f(1.0f, 0.35f, 0.35f);
+    if (hasNextLevel) drawTextCentered(0.0f, 2.7f, "LEVEL COMPLETE!", GLUT_BITMAP_TIMES_ROMAN_24);
+    else if (gameWon) drawTextCentered(0.0f, 2.7f, "YOU WIN! ALL LEVELS DONE!", GLUT_BITMAP_TIMES_ROMAN_24);
+    else drawTextCentered(0.0f, 2.7f, "GAME OVER", GLUT_BITMAP_TIMES_ROMAN_24);
 
-    // Main Menu button
-    glColor3f(0.2f, 0.4f, 0.8f);
-    glBegin(GL_QUADS);
-        glVertex2f(mainMenuX, mainMenuY);
-        glVertex2f(mainMenuX+buttonWidth, mainMenuY);
-        glVertex2f(mainMenuX+buttonWidth, mainMenuY+buttonHeight);
-        glVertex2f(mainMenuX, mainMenuY+buttonHeight);
-    glEnd();
-    glColor3f(1.0f,1.0f,1.0f);
-    drawText(mainMenuX+0.6f, mainMenuY+0.15f, "Main Menu");
+    // Score lines
+    char buffer[64];
+    glColor3f(1.0f, 1.0f, 1.0f);
+    snprintf(buffer, sizeof(buffer), "Score: %d", score);
+    drawTextCentered(0.0f, 1.9f, buffer, GLUT_BITMAP_HELVETICA_18);
 
-    // Restart button
-    glColor3f(0.2f, 0.4f, 0.8f);
-    glBegin(GL_QUADS);
-        glVertex2f(restartX, restartY);
-        glVertex2f(restartX+buttonWidth, restartY);
-        glVertex2f(restartX+buttonWidth, restartY+buttonHeight);
-        glVertex2f(restartX, restartY+buttonHeight);
-    glEnd();
-    glColor3f(1.0f,1.0f,1.0f);
-    drawText(restartX+1.0f, restartY+0.15f, "Restart");
+    glColor3f(0.75f, 0.75f, 0.85f);
+    if (gameWon) snprintf(buffer, sizeof(buffer), "Time bonus: +%d      High Score: %d", lastTimeBonus, highScore);
+    else snprintf(buffer, sizeof(buffer), "High Score: %d", highScore);
+    drawTextCentered(0.0f, 1.2f, buffer, GLUT_BITMAP_HELVETICA_18);
+
+    // Buttons
+    if (hasNextLevel) drawPanelButton(nextLevelX, nextLevelY, "Next Level", 0.2f, 0.6f, 0.3f);
+    drawPanelButton(mainMenuX, mainMenuY, "Main Menu", 0.2f, 0.4f, 0.8f);
+    drawPanelButton(restartX, restartY, "Restart", 0.2f, 0.4f, 0.8f);
+
+    // Keyboard hint
+    glColor3f(0.6f, 0.6f, 0.7f);
+    if (hasNextLevel) drawTextCentered(0.0f, -3.2f, "Enter: Next    R: Restart    Esc: Menu", GLUT_BITMAP_HELVETICA_12);
+    else drawTextCentered(0.0f, -3.2f, "Enter / R: Restart    Esc: Menu", GLUT_BITMAP_HELVETICA_12);
 }
 
 void drawSky1()
@@ -4543,7 +4904,7 @@ void drawStones()
   }
 void checkStones()
 {
-    float charScreenX = charX + 4.75f;
+    float charScreenX = charX + CHAR_HITBOX_OFFSET_X;
     float charScreenY = charY + 0.1f;
 
     for (int i = 0; i < TOTAL_STONES; i++) {
@@ -4552,14 +4913,14 @@ void checkStones()
 
         // simple AABB hitbox
         bool hitX = charScreenX < sx + STONE_W &&
-                    charScreenX + 0.9f > sx - STONE_W;
+                    charScreenX + CHAR_HITBOX_SIZE > sx - STONE_W;
 
         bool hitY = charScreenY < sy + STONE_H &&
-                    charScreenY + 0.9f > sy;
+                    charScreenY + CHAR_HITBOX_SIZE > sy;
 
         if (hitX && hitY) {
-            if (!stoneHit[i]) {   // ✅ একবারই life কমবে
-                lives--;
+            if (!stoneHit[i]) {   // একবারই life কমবে
+                takeHit();
                 stoneHit[i] = true;
             }
         } else {
@@ -4628,16 +4989,29 @@ void drawRotatingSignBoard(float x, float y, int i)
     glPopMatrix();
 }
 
+// Distance from x to the nearest dorayaki or heart, so hazards are not placed on top of them
+float distanceToCollectible(float x)
+{
+    float best = 1000.0f;
+    for (int i = 0; i < TOTAL_CAKES; i++) best = fmin(best, fabs(x - doracakeX[i]));
+    for (int i = 0; i < totalHearts; i++) best = fmin(best, fabs(x - heartX[i]));
+    return best;
+}
+
 void placeManholeFire()
 {
     float minX = -7.0f;
     float maxX =  7.0f;
 
     for (int i = 0; i < TOTAL_FIRES; i++) {
-        int sceneIndex = rand() % totalScenes;
-        float localX = minX + (rand() / (float)RAND_MAX) * (maxX - minX);
+        int attempts = 0;
+        do {
+            int sceneIndex = rand() % totalScenes;
+            float localX = minX + (rand() / (float)RAND_MAX) * (maxX - minX);
+            fireX[i] = sceneIndex * sceneWidth + localX;
+            attempts++;
+        } while (distanceToCollectible(fireX[i]) < HAZARD_CLEARANCE && attempts < 1000);
 
-        fireX[i] = sceneIndex * sceneWidth + localX;
         fireY[i] = -6.5f;          // ground  manhole position
 
         fireOn[i] = false;
@@ -4695,7 +5069,7 @@ void drawManholeFire()
 }
 void checkManholeFire()
 {
-    float charScreenX = charX + 4.75f;
+    float charScreenX = charX + CHAR_HITBOX_OFFSET_X;
     float charScreenY = charY + 0.1f;
 
     for (int i = 0; i < TOTAL_FIRES; i++) {
@@ -4708,14 +5082,14 @@ void checkManholeFire()
         float fy = fireY[i];
 
         bool hitX = charScreenX < fx + 0.6f &&
-                    charScreenX + 0.9f > fx - 0.6f;
+                    charScreenX + CHAR_HITBOX_SIZE > fx - 0.6f;
 
         bool hitY = charScreenY < fy + 1.3f &&
-                    charScreenY + 0.9f > fy;
+                    charScreenY + CHAR_HITBOX_SIZE >= fy - 0.05f;
 
         if (hitX && hitY) {
             if (!fireHit[i]) {
-                lives--;
+                takeHit();
                 fireHit[i] = true;
             }
         } else {
@@ -4868,7 +5242,7 @@ void placeCollectibles() {
 void checkCollectibles() {
     float collectRadius = 2.0f;
 
-    float charScreenX = charX + 4.75f;
+    float charScreenX = charX + CHAR_HITBOX_OFFSET_X;
     float charScreenY = charY + 0.1f;
 
     // Dora cakes
@@ -4883,6 +5257,9 @@ void checkCollectibles() {
             if (dx * dx + dy * dy < collectRadius * collectRadius) {
                 doracakeCollected[i] = true;
                 doracakesCollected++;
+                score += CAKE_POINTS;
+                spawnParticles(cakeScreenX, cakeScreenY + 0.5f, 30, 1.0f, 0.9f, 0.2f, 0.12f);
+                playSound("collect");
             }
         }
     }
@@ -4901,15 +5278,21 @@ void checkCollectibles() {
                 if (lives < totalHearts) {
                     lives++;
                 }
+                spawnParticles(heartScreenX, heartScreenY + 0.5f, 20, 1.0f, 0.5f, 0.7f, 0.1f);
             }
         }
     }
 
-    if (doracakesCollected >= 5) {
+    if (doracakesCollected >= TOTAL_CAKES) {
+        int seconds = levelFrames / 60;
+        lastTimeBonus = (seconds < TIME_BONUS_SECONDS) ? (TIME_BONUS_SECONDS - seconds) * TIME_BONUS_PER_SECOND : 0;
+        score += lastTimeBonus;
+        saveHighScore();
         showEndScreen = true;
         gameWon = true;
         moving = false;
         jumping = false;
+        playSound("levelup");
     }
 
 }
@@ -4921,15 +5304,20 @@ void placeObstacles() {
 
     for (int i = 0; i < TOTAL_OBSTACLES; i++) {
         bool valid = false;
+        int attempts = 0;
 
         while (!valid) {
             int sceneIndex = rand() % totalScenes;
             float localX = minX + (rand() / (float)RAND_MAX) * (maxX - minX);
             float candidateX = sceneIndex * sceneWidth + localX;
+            bool slides = (rand() % 3 == 0);
+            float range = slides ? OBSTACLE_SLIDE_RANGE : 0.0f;
+            attempts++;
 
-            valid = true;
+            // keep clear of dorayaki and hearts (give up after many tries so placement always finishes)
+            valid = attempts > 1000 || distanceToCollectible(candidateX) >= HAZARD_CLEARANCE + range;
 
-            for (int j = 0; j < i; j++) {
+            for (int j = 0; j < i && valid; j++) {
                 if (fabs(candidateX - obstaclePosX[j]) < minDistance) {
                     valid = false;
                     break;
@@ -4944,12 +5332,12 @@ void placeObstacles() {
                 obstacleEnabled[i] = true;
                 obstacleType[i] = rand() % 3;
 
-                // Horizontal movement (Left–Right)
-                if (rand() % 3 == 0) {
+                // Horizontal movement (Left–Right), only around its own spot
+                if (slides) {
                     obstacleMoveSpeedX[i] = 0.03f;
                     obstacleMoveDirX[i] = 1;
-                    obstacleLeftBound[i]  = sceneIndex * sceneWidth - 9.0f;
-                    obstacleRightBound[i] = sceneIndex * sceneWidth + 9.0f;
+                    obstacleLeftBound[i]  = candidateX - range;
+                    obstacleRightBound[i] = candidateX + range;
                 } else {
                     obstacleMoveSpeedX[i] = 0.0f;
                     obstacleMoveDirX[i] = 0;
@@ -4967,8 +5355,9 @@ void placeObstacles() {
                 } else if (verticalType == 1) {
                     obstacleMoveSpeedY[i] = 0.04f;
                     obstacleMoveDirY[i] = -1;
-                    obstacleTopBound[i] = obstaclePosY[i];
-                    obstacleBottomBound[i] = -10.0f;
+                    obstacleTopBound[i] = -1.0f;      // falls from above down to the ground
+                    obstacleBottomBound[i] = -6.0f;
+                    obstaclePosY[i] = obstacleTopBound[i];
                 } else { // static
                     obstacleMoveSpeedY[i] = 0.0f;
                     obstacleMoveDirY[i] = 0;
@@ -5008,46 +5397,327 @@ void updateObstacles() {
     }
 }
 
+// Half width / half height of an obstacle's drawing, centered on obstaclePos
+void getObstacleHalfSize(int i, float& halfW, float& halfH, float& offsetY)
+{
+    offsetY = 0.0f;
+    if (obstacleLevel[i] == 2) {             // rotating sign board, r = 1.5
+        halfW = 1.3f; halfH = 1.3f;
+    } else if (obstacleType[i] == 0) {       // ball, r = 1.0
+        halfW = 0.9f; halfH = 0.9f;
+    } else if (obstacleType[i] == 1) {       // mouse at scale 3
+        halfW = 1.1f; halfH = 0.6f; offsetY = 0.15f;
+    } else {                                 // spiky fruit at scale 3
+        halfW = 0.8f; halfH = 0.8f;
+    }
+}
+
 void checkObstacles() {
-    float charScreenX = charX + 4.75f;
-    float charScreenY = charY + 0.1f;
+    // Doraemon's body box on screen (mirrored when facing left)
+    float bodyA = charX + CHAR_HITBOX_OFFSET_X + facing * DORAEMON_SCALE * (DORAEMON_BODY_LEFT - CHAR_HITBOX_OFFSET_X);
+    float bodyB = charX + CHAR_HITBOX_OFFSET_X + facing * DORAEMON_SCALE * (DORAEMON_BODY_RIGHT - CHAR_HITBOX_OFFSET_X);
+    float bodyLeft = fmin(bodyA, bodyB);
+    float bodyRight = fmax(bodyA, bodyB);
+    float bodyBottom = charY + DORAEMON_SCALE * DORAEMON_BODY_BOTTOM;
+    float bodyTop = charY + DORAEMON_SCALE * DORAEMON_BODY_TOP;
 
     for (int i = 0; i < TOTAL_OBSTACLES; i++) {
         if (!obstacleEnabled[i]) continue;
         if (obstacleLevel[i] != currentLevel) continue;
 
-        float obsScreenX = obstaclePosX[i] + worldX;
-        float obsScreenY = obstaclePosY[i];
+        float halfW, halfH, offsetY;
+        getObstacleHalfSize(i, halfW, halfH, offsetY);
+        float obsX = obstaclePosX[i] + worldX;
+        float obsY = obstaclePosY[i] + offsetY;
 
-        bool hitX = charScreenX < obsScreenX + obstacleWidth &&
-                    charScreenX + 0.9f > obsScreenX;
-
-        bool hitY = charScreenY < obsScreenY + obstacleHeight &&
-                    charScreenY + 0.9f > obsScreenY;
+        bool hitX = bodyLeft < obsX + halfW && bodyRight > obsX - halfW;
+        bool hitY = bodyBottom < obsY + halfH && bodyTop > obsY - halfH;
 
         if (hitX && hitY) {
             if (!obstacleHit[i]) {
-                lives--;
+                takeHit();
                 obstacleHit[i] = true;
             }
         } else {
             obstacleHit[i] = false;
         }
     }
-    if (lives <= 0) {
-        showEndScreen = true;
-        gameWon = false;
-        moving = false;
-        jumping = false;
+}
+
+// ---------- Take-copter gadget ----------
+// Drawn around (0,0): stem going down, blades on top. Model units.
+void drawTakeCopter(float angle)
+{
+    // blade width changes with the angle so it looks like it is spinning
+    float bladeW = 0.75f * fabs(cos(angle * 3.1416f / 180.0f)) + 0.12f;
+
+    glColor3f(0.95f, 0.75f, 0.1f);   // stem
+    glBegin(GL_QUADS);
+        glVertex2f(-0.07f, -0.5f); glVertex2f(0.07f, -0.5f);
+        glVertex2f(0.07f, 0.05f);  glVertex2f(-0.07f, 0.05f);
+    glEnd();
+
+    glColor3f(0.95f, 0.75f, 0.1f);   // blades
+    glBegin(GL_QUADS);
+        glVertex2f(-bladeW, 0.05f); glVertex2f(bladeW, 0.05f);
+        glVertex2f(bladeW, 0.2f);   glVertex2f(-bladeW, 0.2f);
+    glEnd();
+
+    glColor3f(0.0f, 0.0f, 0.0f);
+    glLineWidth(1.5f);
+    glBegin(GL_LINE_LOOP);
+        glVertex2f(-bladeW, 0.05f); glVertex2f(bladeW, 0.05f);
+        glVertex2f(bladeW, 0.2f);   glVertex2f(-bladeW, 0.2f);
+    glEnd();
+
+    glColor3f(0.85f, 0.2f, 0.2f);    // hub
+    glBegin(GL_POLYGON);
+    for (int i = 0; i < 20; i++) {
+        float a = 2.0f * 3.1416f * i / 20;
+        glVertex2f(0.12f * cos(a), 0.12f + 0.12f * sin(a));
+    }
+    glEnd();
+
+    glColor3f(0.95f, 0.75f, 0.1f);   // base that sits on the head
+    glBegin(GL_POLYGON);
+    for (int i = 0; i < 20; i++) {
+        float a = 3.1416f * i / 19;
+        glVertex2f(0.25f * cos(a), -0.55f + 0.15f * sin(a));
+    }
+    glEnd();
+}
+
+void placeGadget()
+{
+    int sceneIndex = 1 + rand() % (totalScenes - 1);
+    copterX = sceneIndex * sceneWidth + 2.0f + (rand() / (float)RAND_MAX) * 8.0f;
+    copterY = -6.0f;
+    copterPicked = false;
+    copterTimer = 0;
+}
+
+void checkGadget()
+{
+    if (copterPicked) return;
+    float dx = (charX + CHAR_HITBOX_OFFSET_X + CHAR_HITBOX_SIZE / 2) - (copterX + worldX);
+    float dy = (charY + CHAR_HITBOX_SIZE / 2) - copterY;
+    if (dx * dx + dy * dy < 1.5f * 1.5f) {
+        copterPicked = true;
+        copterTimer = COPTER_FRAMES;
+        jumping = true;
+        spawnParticles(copterX + worldX, copterY + 0.5f, 30, 0.3f, 0.8f, 1.0f, 0.12f);
+        playSound("gadget");
     }
 }
 
+void drawGadgetItem()
+{
+    if (copterPicked) return;
+    float bob = 0.2f * sin(glutGet(GLUT_ELAPSED_TIME) * 0.004f);
+    glPushMatrix();
+    glTranslatef(copterX + worldX, copterY + 1.0f + bob, 0.0f);
+    glScalef(1.4f, 1.4f, 1.0f);
+    drawTakeCopter(propellerAngle);
+    glPopMatrix();
+
+    // label so players know what the item is
+    glPushAttrib(GL_ENABLE_BIT);
+    glDisable(GL_LIGHTING);
+    glColor3f(1.0f, 0.95f, 0.4f);
+    drawTextCentered(copterX + worldX, copterY + 1.6f + bob, "Take-copter", GLUT_BITMAP_HELVETICA_18);
+    glPopAttrib();
+}
+
+// ---------- Mouse enemy ----------
+void placeMouseEnemy()
+{
+    int sceneIndex = 1 + rand() % (totalScenes - 1);
+    float center = sceneIndex * sceneWidth + 4.0f;
+    mouseLeftBound = center - 5.0f;
+    mouseRightBound = center + 5.0f;
+    mouseX = center;
+    mouseY = -6.8f;
+    mouseDir = -1;
+    scaredTimer = 0;
+    scareCooldown = 0;
+}
+
+void updateMouseEnemy()
+{
+    mouseX += MOUSE_SPEED * mouseDir;
+    if (mouseX <= mouseLeftBound) mouseDir = 1;
+    if (mouseX >= mouseRightBound) mouseDir = -1;
+
+    if (scareCooldown > 0) scareCooldown--;
+    if (scaredTimer > 0 || scareCooldown > 0) return;
+
+    float charCenterX = charX + CHAR_HITBOX_OFFSET_X + CHAR_HITBOX_SIZE / 2;
+    float mouseScreenX = mouseX + worldX;
+    bool nearGround = charY < GROUND_Y + 2.0f;   // jumping high over the mouse is safe
+
+    if (nearGround && fabs(charCenterX - mouseScreenX) < MOUSE_SCARE_DIST) {
+        scaredTimer = SCARED_FRAMES;
+        scareCooldown = SCARED_FRAMES + SCARE_COOLDOWN_FRAMES;
+        scaredDir = (charCenterX < mouseScreenX) ? -1 : 1;
+        playSound("scared");
+    }
+}
+
+void drawMouseEnemy()
+{
+    glPushMatrix();
+    glTranslatef(mouseX + worldX, mouseY, 0.0f);
+    glScalef((float)-mouseDir, 1.0f, 1.0f);   // drawMouse() faces left
+    drawMouse(0.0f, 0.0f, 2.5f);
+    glPopMatrix();
+}
+
+// ---------- Level setup ----------
+// Puts character, world, collectibles and every hazard back to the start of currentLevel.
+void resetLevel()
+{
+    charX = CHAR_START_X;
+    charY = GROUND_Y;
+    velY = 0.0f;
+    jumpsUsed = 0;
+    moving = false;
+    jumping = false;
+    leftHeld = rightHeld = upHeld = false;
+    facing = 1;
+    legAngle = 0.0f;
+    worldX = 0.0f;
+    sceneCount = 0;
+
+    showEndScreen = false;
+    gameWon = false;
+    paused = false;
+    invincibleTimer = 0;
+    hitFlash = 0.0f;
+    levelFrames = 0;
+    lastTimeBonus = 0;
+
+    placeCollectibles();
+
+    for (int i = 0; i < TOTAL_OBSTACLES; i++) {
+        obstacleEnabled[i] = false;
+        obstacleHit[i] = false;
+    }
+    if (currentLevel == 1) {
+        placeStones();
+    } else {
+        placeObstacles();
+        if (currentLevel == 2) placeManholeFire();
+    }
+
+    placeGadget();
+    placeMouseEnemy();
+    clearParticles();
+}
+
+void startLevel(int level)
+{
+    currentLevel = level;
+    showHome = false;
+    levelStartScore = score;
+    resetLevel();
+}
+
+void restartLevel()
+{
+    score = levelStartScore;
+    resetLevel();
+}
+
+void goToMainMenu()
+{
+    saveHighScore();
+    score = 0;
+    showEndScreen = false;
+    paused = false;
+    showHome = true;
+}
+
+// ---------- Player ----------
+void drawPlayer()
+{
+    bool blinkHidden = invincibleTimer > 0 && (invincibleTimer / 4) % 2 == 0;
+    if (!blinkHidden) {
+        glPushMatrix();
+        glTranslatef(charX, charY, 0.0f);
+        glTranslatef(CHAR_HITBOX_OFFSET_X, 0.0f, 0.0f);
+        glScalef((float)facing * DORAEMON_SCALE, DORAEMON_SCALE, 1.0f);
+        glTranslatef(-CHAR_HITBOX_OFFSET_X, 0.0f, 0.0f);
+        Doraemon();
+        if (copterTimer > 0) {
+            glTranslatef(DORAEMON_HEAD_X, DORAEMON_HEAD_TOP + 1.0f, 0.0f);
+            glScalef(1.7f, 1.7f, 1.0f);
+            drawTakeCopter(propellerAngle);
+        }
+        glPopMatrix();
+    }
+
+    if (scaredTimer > 0) {
+        float headX = charX + CHAR_HITBOX_OFFSET_X + facing * DORAEMON_SCALE * (DORAEMON_HEAD_X - CHAR_HITBOX_OFFSET_X);
+        float headY = charY + DORAEMON_SCALE * DORAEMON_HEAD_TOP;
+        glPushAttrib(GL_ENABLE_BIT);
+        glDisable(GL_LIGHTING);
+        float shake = 0.08f * sin(scaredTimer * 1.5f);
+        glColor3f(1.0f, 0.1f, 0.1f);
+        drawTextCentered(headX + shake, headY + 0.4f, "!!", GLUT_BITMAP_TIMES_ROMAN_24);
+        glPopAttrib();
+    }
+}
+
+// ---------- HUD / overlays ----------
+float levelProgress()
+{
+    float levelLength = totalScenes * sceneWidth + (MAX_CHAR_X - CHAR_START_X);
+    float p = ((charX - CHAR_START_X) - worldX) / levelLength;
+    if (p < 0.0f) p = 0.0f;
+    if (p > 1.0f) p = 1.0f;
+    return p;
+}
+
 void drawHUD() {
-    char buffer[50];
+    char buffer[96];
+
+    glPushAttrib(GL_ENABLE_BIT);
+    glDisable(GL_LIGHTING);
 
     glColor3f(1.0f, 1.0f, 1.0f);
-    sprintf(buffer, "Cakes: %d / 5", doracakesCollected);
+    sprintf(buffer, "Cakes: %d / %d", doracakesCollected, TOTAL_CAKES);
     drawText(-9.2f, 8.5f, buffer);
+
+    sprintf(buffer, "Level %d", currentLevel);
+    drawText(-0.8f, 9.2f, buffer);
+    sprintf(buffer, "Time: %d s", levelFrames / 60);
+    drawText(-0.9f, 8.5f, buffer);
+
+    sprintf(buffer, "Score: %d", score);
+    drawText(5.5f, 9.2f, buffer);
+    sprintf(buffer, "High: %d", highScore > score ? highScore : score);
+    drawText(5.5f, 8.5f, buffer);
+
+    if (copterTimer > 0) {
+        glColor3f(1.0f, 0.85f, 0.2f);
+        sprintf(buffer, "Flying!  Hold UP to rise, release to glide down  (%d s)", copterTimer / 60 + 1);
+        drawTextCentered(0.0f, 6.9f, buffer, GLUT_BITMAP_HELVETICA_18);
+    }
+
+    // Progress bar
+    float barX = -3.0f, barY = 7.8f, barW = 6.0f, barH = 0.25f;
+    glColor3f(0.2f, 0.2f, 0.2f);
+    glBegin(GL_QUADS);
+        glVertex2f(barX, barY); glVertex2f(barX + barW, barY);
+        glVertex2f(barX + barW, barY + barH); glVertex2f(barX, barY + barH);
+    glEnd();
+    glColor3f(0.3f, 0.8f, 0.3f);
+    glBegin(GL_QUADS);
+        glVertex2f(barX, barY); glVertex2f(barX + barW * levelProgress(), barY);
+        glVertex2f(barX + barW * levelProgress(), barY + barH); glVertex2f(barX, barY + barH);
+    glEnd();
+
+    glPopAttrib();
 
     for (int i = 0; i < 3; i++) {
         glPushMatrix();
@@ -5063,6 +5733,59 @@ void drawHUD() {
     }
 }
 
+void drawFullScreenQuad(float r, float g, float b, float a)
+{
+    glPushAttrib(GL_ENABLE_BIT);
+    glDisable(GL_LIGHTING);
+    glColor4f(r, g, b, a);
+    glBegin(GL_QUADS);
+        glVertex2f(SCREEN_LEFT, SCREEN_BOTTOM); glVertex2f(SCREEN_RIGHT, SCREEN_BOTTOM);
+        glVertex2f(SCREEN_RIGHT, SCREEN_TOP);   glVertex2f(SCREEN_LEFT, SCREEN_TOP);
+    glEnd();
+    glPopAttrib();
+}
+
+// Everything drawn on top of a level: particles, hit flash, HUD, pause and end screen
+void drawOverlays()
+{
+    drawParticles();
+    if (hitFlash > 0.0f) drawFullScreenQuad(1.0f, 0.0f, 0.0f, hitFlash);
+    drawHUD();
+
+    if (paused && !showEndScreen) {
+        drawFullScreenQuad(0.0f, 0.0f, 0.0f, 0.4f);
+        glPushAttrib(GL_ENABLE_BIT);
+        glDisable(GL_LIGHTING);
+
+        const float panelL = -3.6f, panelR = 3.6f, panelB = -1.4f, panelT = 1.6f;
+        glColor4f(0.05f, 0.05f, 0.12f, 0.94f);
+        glBegin(GL_QUADS);
+            glVertex2f(panelL, panelB); glVertex2f(panelR, panelB);
+            glVertex2f(panelR, panelT); glVertex2f(panelL, panelT);
+        glEnd();
+        glColor3f(1.0f, 0.85f, 0.2f);
+        glLineWidth(3.0f);
+        glBegin(GL_LINE_LOOP);
+            glVertex2f(panelL, panelB); glVertex2f(panelR, panelB);
+            glVertex2f(panelR, panelT); glVertex2f(panelL, panelT);
+        glEnd();
+
+        drawTextCentered(0.0f, 0.6f, "PAUSED", GLUT_BITMAP_TIMES_ROMAN_24);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        drawTextCentered(0.0f, -0.2f, "P : Resume", GLUT_BITMAP_HELVETICA_18);
+        glColor3f(0.75f, 0.75f, 0.85f);
+        drawTextCentered(0.0f, -0.9f, "Esc : Main Menu", GLUT_BITMAP_HELVETICA_18);
+        glPopAttrib();
+    }
+
+    if (showEndScreen) {
+        glPushAttrib(GL_ENABLE_BIT);
+        glDisable(GL_LIGHTING);
+        drawEndScreen();
+        glPopAttrib();
+    }
+}
+
 void drawLighting2()
 {
       //LIGHTING
@@ -5070,6 +5793,7 @@ void drawLighting2()
          glEnable(GL_DEPTH_TEST);
 
         glEnable(GL_LIGHTING);
+        glDisable(GL_LIGHT0);   // Level 1 light, otherwise both lights add up after switching levels
         glEnable(GL_LIGHT1);
         glEnable(GL_COLOR_MATERIAL);
 
@@ -5088,6 +5812,7 @@ void drawLighting2()
 void drawLighting1()
 {
     glEnable(GL_LIGHTING);
+    glDisable(GL_LIGHT1);   // Level 2 light, otherwise both lights add up after switching levels
     glEnable(GL_LIGHT0);
     glEnable(GL_COLOR_MATERIAL);
 
@@ -5127,31 +5852,10 @@ void Level1()
            glPopMatrix();
        }
 
-       glPushMatrix();
-       glTranslatef(charX, charY, 0.0f);
-       glTranslatef(((0.0f+9.5f)/2.0f), 0.0f, 0.0f);
-       glScalef((float)facing * 0.5f, 0.5f, 1.0f);
-       glTranslatef(-((0.0f+9.5f)/2.0f), 0.0f, 0.0f);
-       Doraemon();
-       glPopMatrix();
+    drawPlayer();
 
-       if (!level1Started) {
-               placeCollectibles();
-             //  placeObstacles();
-              placeStones();
-               level1Started = true;
-       }
-       for (int i = 0; i < TOTAL_OBSTACLES; i++) {
-           if (!obstacleEnabled[i]) continue;
-           if (obstacleLevel[i] != currentLevel) continue;
-
-           float drawX = obstaclePosX[i]+worldX;
-           float drawY = obstaclePosY[i];
-
-
-
-
-       }
+       drawGadgetItem();
+       drawMouseEnemy();
 
        for (int i = 0; i < 5; i++) {
            if (!doracakeCollected[i]) {
@@ -5174,13 +5878,8 @@ void Level1()
            }
        }
 
-       drawEndScreen();
-    drawStones();
-       drawHUD();
-
-       if (showEndScreen) {
-       drawEndScreen();
-       }
+       drawStones();
+       drawOverlays();
 
        glutSwapBuffers();
 
@@ -5211,21 +5910,10 @@ void Level2()
             glPopMatrix();
         }
 
-    glPushMatrix();
-    glTranslatef(charX, charY, 0.0f);
-    glTranslatef(((0.0f+9.5f)/2.0f), 0.0f, 0.0f);
-    glScalef((float)facing * 0.5f, 0.5f, 1.0f);
-    glTranslatef(-((0.0f+9.5f)/2.0f), 0.0f, 0.0f);
-    Doraemon();
-    glPopMatrix();
+    drawPlayer();
 
-        if (!level2Started)
-        {
-                placeCollectibles();
-                placeObstacles();
-                placeManholeFire();
-                level2Started = true;
-        }
+    drawGadgetItem();
+    drawMouseEnemy();
 
     for (int i = 0; i < TOTAL_OBSTACLES; i++) {
         if (!obstacleEnabled[i]) continue;
@@ -5261,13 +5949,8 @@ void Level2()
         }
 
 
-       // drawEndScreen();
         drawManholeFire();
-        drawHUD();
-
-        if (showEndScreen) {
-        drawEndScreen();
-        }
+        drawOverlays();
 
         glutSwapBuffers();
 
@@ -5297,19 +5980,10 @@ void Level3()
             glPopMatrix();
         }
 
-        glPushMatrix();
-        glTranslatef(charX, charY, 0.0f);
-        glTranslatef(((0.0f+9.5f)/2.0f), 0.0f, 0.0f);
-        glScalef((float)facing * 0.5f, 0.5f, 1.0f);
-        glTranslatef(-((0.0f+9.5f)/2.0f), 0.0f, 0.0f);
-        Doraemon();
-        glPopMatrix();
+    drawPlayer();
 
-        if (!level3Started) {
-                placeCollectibles();
-                placeObstacles();
-                level3Started = true;
-        }
+        drawGadgetItem();
+        drawMouseEnemy();
         for (int i = 0; i < TOTAL_OBSTACLES; i++) {
     if (!obstacleEnabled[i]) continue;
     if (obstacleLevel[i] != currentLevel) continue;
@@ -5377,13 +6051,7 @@ void Level3()
         glPopMatrix();
         }
 
-        drawEndScreen();
-
-        drawHUD();
-
-        if (showEndScreen) {
-        drawEndScreen();
-        }
+        drawOverlays();
         glPopAttrib();
 
         glutSwapBuffers();
@@ -5391,32 +6059,80 @@ void Level3()
 }
 
 
+void updateMovementFromKeys() {
+    if (scaredTimer > 0) return;          // running away from the mouse, ignore input
+    if (rightHeld && !leftHeld) facing = 1;
+    if (leftHeld && !rightHeld) facing = -1;
+    moving = leftHeld || rightHeld;
+}
+
+void tryJump() {
+    if (copterTimer > 0) return;          // flying: UP lifts instead
+    if (jumpsUsed >= MAX_JUMPS) return;
+    velY = (jumpsUsed == 0) ? JUMP_VELOCITY : DOUBLE_JUMP_VELOCITY;
+    jumping = true;
+    jumpsUsed++;
+}
+
 void specialKeyPress(int key, int x, int y) {
-    if (showEndScreen) return;
+    if (showHome || showEndScreen) return;
     switch(key) {
         case GLUT_KEY_RIGHT:
-            facing = 1;
-            moving = true;
+            rightHeld = true;
             break;
         case GLUT_KEY_LEFT:
-            facing = -1;
-            moving = true;
+            leftHeld = true;
             break;
         case GLUT_KEY_UP:
-            if (!jumping && charY <= -7.5f + 0.01f)
-                jumping = true;
+            upHeld = true;
+            if (!paused) tryJump();
             break;
     }
+    updateMovementFromKeys();
 }
 
 void specialKeyRelease(int key, int x, int y) {
-    if (showEndScreen) return;
     switch(key) {
         case GLUT_KEY_RIGHT:
+            rightHeld = false;
+            break;
         case GLUT_KEY_LEFT:
-            moving = false;
+            leftHeld = false;
+            break;
+        case GLUT_KEY_UP:
+            upHeld = false;
             break;
     }
+    if (!showHome && !showEndScreen) updateMovementFromKeys();
+}
+
+void goToNextLevel() {
+    if (currentLevel < totalLevels) startLevel(currentLevel + 1);
+}
+
+void keyPress(unsigned char key, int x, int y) {
+    const unsigned char KEY_ENTER = 13, KEY_ESC = 27;
+
+    if (showHome) {
+        if (key == '1' || key == KEY_ENTER) { score = 0; startLevel(1); }
+        else if (key == '2') { score = 0; startLevel(2); }
+        else if (key == '3') { score = 0; startLevel(3); }
+        else if (key == KEY_ESC) exit(0);
+        return;
+    }
+
+    if (showEndScreen) {
+        if (key == KEY_ENTER) {
+            if (gameWon && currentLevel < totalLevels) goToNextLevel();
+            else restartLevel();
+        }
+        else if (key == 'r' || key == 'R') restartLevel();
+        else if (key == KEY_ESC) goToMainMenu();
+        return;
+    }
+
+    if (key == 'p' || key == 'P') paused = !paused;
+    else if (key == KEY_ESC) goToMainMenu();
 }
 
 
@@ -5427,75 +6143,72 @@ void mouseClick(int button, int state, int x, int y)
     int winW = glutGet(GLUT_WINDOW_WIDTH);
     int winH = glutGet(GLUT_WINDOW_HEIGHT);
 
-    float fx = ((float)x / winW) * 20.0f - 10.0f;
-    float fy = 10.0f - ((float)y / winH) * 20.0f;
+    // window pixels -> gluOrtho2D(-9.5, 9.5, -10, 10) coordinates
+    float fx = ((float)x / winW) * (SCREEN_RIGHT - SCREEN_LEFT) + SCREEN_LEFT;
+    float fy = SCREEN_TOP - ((float)y / winH) * (SCREEN_TOP - SCREEN_BOTTOM);
 
     if (showHome)
     {
-        // LEVEL 1
-        if (fx >= -2.0f && fx <= 2.0f && fy <= 3.0f && fy >= 1.8f) {
-            currentLevel = 1;
-            showHome = false;
-            return;
-        }
-
-        // LEVEL 2
-        if (fx >= -2.0f && fx <= 2.0f && fy <= 1.0f && fy >= -0.2f) {
-            currentLevel = 2;
-            showHome = false;
-            return;
-        }
-
-        // LEVEL 3
-        if (fx >= -2.0f && fx <= 2.0f && fy <= -1.0f && fy >= -2.2f) {
-            currentLevel = 3;
-            showHome = false;
-            return;
+        for (int i = 0; i < 3; i++) {
+            if (fx >= HOME_BTN_X && fx <= HOME_BTN_X + HOME_BTN_W &&
+                fy <= HOME_BTN_TOP[i] && fy >= HOME_BTN_TOP[i] - HOME_BTN_H) {
+                score = 0;
+                startLevel(i + 1);
+                return;
+            }
         }
     }
 
     if (showEndScreen)
     {
+        // Next Level
+        if (gameWon && currentLevel < totalLevels &&
+            fx >= nextLevelX && fx <= nextLevelX + buttonWidth &&
+            fy >= nextLevelY && fy <= nextLevelY + buttonHeight)
+        {
+            goToNextLevel();
+            return;
+        }
+
         // Main Menu
         if (fx >= mainMenuX && fx <= mainMenuX + buttonWidth &&
             fy >= mainMenuY && fy <= mainMenuY + buttonHeight)
         {
-            doracakesCollected = 0;
-            lives = totalHearts;
-            charX = -9.5f;
-            charY = -7.5f;
-            worldX = 0.0f;
-            sceneCount = 0;
-
-            showEndScreen = false;
-            showHome = true;
+            goToMainMenu();
             return;
         }
 
         if (fx >= restartX && fx <= restartX + buttonWidth &&
             fy >= restartY && fy <= restartY + buttonHeight)
         {
-            showEndScreen = false;
-
-            doracakesCollected = 0;
-            lives = totalHearts;
-
-            for (int i = 0; i < 5; i++) doracakeCollected[i] = false;
-            for (int i = 0; i < 3; i++) heartLost[i] = false;
-
-            placeCollectibles();
-
-            charX = -9.5f;
-            charY = -7.5f;
-            worldX = 0.0f;
-            sceneCount = 0;
-
+            restartLevel();
             return;
         }
     }
 }
 void update(int value)
 {
+    // Nothing moves on the menu, end screen or while paused
+    if (showHome || showEndScreen || paused) {
+        glutPostRedisplay();
+        glutTimerFunc(16, update, 0);
+        return;
+    }
+
+    levelFrames++;
+    if (invincibleTimer > 0) invincibleTimer--;
+    if (hitFlash > 0.0f) hitFlash -= 0.03f;
+    propellerAngle += 25.0f;
+    if (propellerAngle >= 360.0f) propellerAngle -= 360.0f;
+
+    // Scared of the mouse: run the other way for a while
+    if (scaredTimer > 0) {
+        scaredTimer--;
+        moving = true;
+        facing = scaredDir;
+        if (scaredTimer == 0) updateMovementFromKeys();
+    }
+
     if(moving && jumping)
     {
         legAngle = 0.0f;
@@ -5518,65 +6231,99 @@ void update(int value)
             legAngle = 0.0f;
     }
 
-    if (jumping)
+    // Vertical movement: Take-copter flight or gravity
+    if (copterTimer > 0)
     {
-        charY += _jumpSpeed;
-        if (charY >= -7.5f + 6.0f)
-            jumping = false;
+        copterTimer--;
+        velY = upHeld ? COPTER_LIFT : -COPTER_SINK;
+        charY += velY;
+        if (charY > COPTER_MAX_Y) charY = COPTER_MAX_Y;
+        if (copterTimer == 0) {
+            velY = 0.0f;
+            jumping = true;
+            jumpsUsed = MAX_JUMPS;   // fall down, no mid-air jump
+        }
     }
-    else if (charY > -7.5f)
+    else if (jumping || charY > GROUND_Y)
     {
-        charY -= _jumpSpeed;
-        if (charY < -7.5f)
-            charY = -7.5f;
+        velY -= GRAVITY;
+        charY += velY;
     }
 
+    if (charY <= GROUND_Y)
+    {
+        charY = GROUND_Y;
+        velY = 0.0f;
+        jumping = false;
+        jumpsUsed = 0;
+    }
+
+    float moveSpeed = (scaredTimer > 0) ? _moveSpeed * SCARED_SPEED_FACTOR : _moveSpeed;
     if (moving)
     {
         if (facing == 1)
         {
-            if (sceneCount < totalScenes && charX >= -6.0f)
+            if (sceneCount < totalScenes && charX >= SCROLL_RIGHT_X)
             {
-                charX = -6.0f;
-                worldX -= _moveSpeed;
+                charX = SCROLL_RIGHT_X;
+                worldX -= moveSpeed;
 
                 if (worldX <= -(sceneCount + 1) * sceneWidth)
                     sceneCount++;
             }
             else
-                charX += _moveSpeed;
+                charX += moveSpeed;
         }
 
         else if (facing == -1)
         {
-            if (sceneCount > 0 && charX <= -5.0f)
+            if (sceneCount > 0 && charX <= SCROLL_LEFT_X)
             {
-                charX = -5.0f;
-                worldX += _moveSpeed;
+                charX = SCROLL_LEFT_X;
+                worldX += moveSpeed;
 
                 if (worldX >= -(sceneCount - 1) * sceneWidth)
                     sceneCount--;
             }
              else
-                charX -= _moveSpeed;
+                charX -= moveSpeed;
         }
     }
 
     if (sceneCount >= totalScenes)
     {
-        if (charX > 3.2f) charX = 3.2f;
+        if (charX > MAX_CHAR_X) charX = MAX_CHAR_X;
     }
     if (sceneCount <= 0)
     {
-        if (charX < -12.5f) charX = -12.5f;
+        if (charX < MIN_CHAR_X) charX = MIN_CHAR_X;
     }
 
-    updateObstacles();
-    checkObstacles();
+    updateParticles();
+    updateMouseEnemy();
     checkCollectibles();
-    updateManholeFire();
-    checkManholeFire();
-    checkStones();
+    checkGadget();
+
+    // Only check the hazards that belong to this level
+    if (currentLevel == 1) {
+        checkStones();
+    } else {
+        updateObstacles();
+        checkObstacles();
+        if (currentLevel == 2) {
+            updateManholeFire();
+            checkManholeFire();
+        }
+    }
+
+    if (lives <= 0 && !showEndScreen) {
+        showEndScreen = true;
+        gameWon = false;
+        moving = false;
+        jumping = false;
+        saveHighScore();
+        playSound("gameover");
+    }
 
     glutPostRedisplay();
     glutTimerFunc(16, update, 0);
@@ -5627,11 +6374,15 @@ int main(int argc, char** argv) {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB);
     glutInitWindowSize(1500, 1000);
-    glutCreateWindow("D0oraemon's Treat Hunt");
+    glutCreateWindow("Doraemon's Treat Hunt");
     init();
+    srand((unsigned)time(NULL));
+    loadHighScore();
     glutDisplayFunc(display);
     glutSpecialFunc(specialKeyPress);
     glutSpecialUpFunc(specialKeyRelease);
+    glutKeyboardFunc(keyPress);
+    glutIgnoreKeyRepeat(1);
     glutMouseFunc(mouseClick);
     glutTimerFunc(16, update, 0);
 
