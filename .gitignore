@@ -1,0 +1,17 @@
+# Build output
+doraemon-treat-hunt
+*.o
+*.exe
+build/
+
+# Runtime data
+highscore.txt
+
+# macOS / Xcode
+.DS_Store
+xcuserdata/
+DerivedData/
+
+# Editors
+.vscode/
+.idea/
