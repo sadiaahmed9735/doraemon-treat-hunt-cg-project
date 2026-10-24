@@ -21,7 +21,7 @@ Built with C++, OpenGL and GLUT for the Computer Graphics course at AIUB
 
 ## 📖 About The Project
 
-**Doraemon's Treat Hunt** is a 2D side-scrolling game developed with OpenGL and GLUT as our Computer Graphics course project at American International University-Bangladesh (AIUB), Fall 2025-26. The player guides Doraemon through a scrolling town across **3 levels**, collecting **5 dorayaki** in each level while avoiding level-specific hazards.
+**Doraemon's Treat Hunt** is a 2D side-scrolling game developed with OpenGL and GLUT as our Computer Graphics course project at American International University-Bangladesh (AIUB), Fall 2025-26. The player guides Doraemon through a scrolling town across **3 levels**, collecting **5 Doracakes** in each level while avoiding level-specific hazards.
 
 Every object in the game, from Doraemon to the houses, lamp posts and trees, is drawn from OpenGL primitives and parametric curves. No image textures or sprites are used.
 
@@ -40,7 +40,7 @@ Every object in the game, from Doraemon to the houses, lamp posts and trees, is 
 
 - **3 levels** with their own sky, lighting and hazards
 - **Side-scrolling movement** with gravity-based jumping and **double jump**
-- **Collectibles:** gather 5 dorayaki per level to clear it
+- **Collectibles:** gather 5 Doracakes per level to clear it
 - **Lives system:** 3 hearts; extra hearts on the road restore a lost life
 - **Take-copter power-up:** pick it up to fly for about 5 seconds
 - **Mouse enemy:** Doraemon is scared of mice and runs the other way when one gets close
@@ -60,13 +60,13 @@ Every object in the game, from Doraemon to the houses, lamp posts and trees, is 
 
 ### 🔊 Audio Features
 
-- Sound effects for collecting dorayaki, getting hit, level complete, game over, the Take-copter and the mouse scare
+- Sound effects for collecting Doracakes, getting hit, level complete, game over, the Take-copter and the mouse scare
 - macOS uses built-in system sounds, so no extra files are needed
 - Windows plays WAV files from a `sounds` folder
 
 ### 💾 Game Systems
 
-- **Score:** +10 points per dorayaki
+- **Score:** +10 points per Doracake
 - **Time bonus:** finish a level in under 60 seconds to earn +2 points for every second left
 - **High score** saved in `highscore.txt` and kept between sessions
 - **Pause** (P), level complete and game over screens
@@ -136,7 +136,7 @@ Create a `sounds` folder next to the executable and add these files:
 
 ```
 sounds/
-├── collect.wav     # Dorayaki collected
+├── collect.wav     # Doracake collected
 ├── hit.wav         # Hit by a hazard
 ├── levelup.wav     # Level complete
 ├── gameover.wav    # Game over
@@ -162,7 +162,7 @@ sounds/
 
 ### Objective
 
-- Collect all **5 dorayaki** in a level to complete it
+- Collect all **5 Doracakes** in a level to complete it
 - Avoid hazards to keep your **3 hearts**
 - Finish quickly to earn a **time bonus**
 - Clear all **3 levels** to win the game
@@ -216,7 +216,7 @@ doraemon-treat-hunt-cg-project/
 
 ### Collision Detection
 
-- Collectibles (dorayaki, hearts): distance-based radius check
+- Collectibles (Doracakes, hearts): distance-based radius check
 - Hazards: rectangular bounding-box intersection
 - 45 invincibility frames (about 0.75 seconds) after a hit
 
@@ -236,7 +236,7 @@ doraemon-treat-hunt-cg-project/
 | `Doraemon()` | Draws the main character from primitives |
 | `homeScreen()` | Draws the main menu with level buttons |
 | `Level1()` to `Level3()` | Draw each level's scene and hazards |
-| `checkCollectibles()` | Detects dorayaki and heart pickups |
+| `checkCollectibles()` | Detects Doracakes and heart pickups |
 | `checkObstacles()` | Handles collisions with hazards |
 | `updateObstacles()` | Animates moving hazards |
 | `checkGadget()` | Handles the Take-copter power-up |

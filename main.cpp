@@ -185,7 +185,7 @@ float fireTimer[TOTAL_FIRES];
 const float FIRE_ON_TIME  = 60.0f;   // frames (~1 sec)
 const float FIRE_OFF_TIME = 60.0f;
 
-// Hazards keep this far (x distance) from dorayaki and hearts
+// Hazards keep this far (x distance) from Doracakes and hearts
 const float HAZARD_CLEARANCE = 3.0f;
 const float OBSTACLE_SLIDE_RANGE = 2.5f;
 
@@ -492,7 +492,7 @@ void homeScreen()
     glColor3f(0.05f, 0.3f, 0.65f);
     drawTextCentered(0.0f, 6.5f, "DORAEMON'S TREAT HUNT", GLUT_BITMAP_TIMES_ROMAN_24);
     glColor3f(0.85f, 0.45f, 0.1f);
-    drawTextCentered(0.0f, 5.75f, "Collect 5 dorayaki in every level!", GLUT_BITMAP_HELVETICA_18);
+    drawTextCentered(0.0f, 5.75f, "Collect 5 Doracakes in every level!", GLUT_BITMAP_HELVETICA_18);
 
     // Level buttons
     drawHomeButton(0, "LEVEL 1", "Sunny Day");
@@ -529,7 +529,7 @@ void homeScreen()
         Doraemon();
     glPopMatrix();
 
-    // Dorayaki on the right
+    // Doracakes on the right
     float cakePos[3][2] = { { 6.9f, -1.8f }, { 7.9f, -4.1f }, { 6.7f, -6.0f } };
     for (int i = 0; i < 3; i++) {
         glPushMatrix();
@@ -4989,7 +4989,7 @@ void drawRotatingSignBoard(float x, float y, int i)
     glPopMatrix();
 }
 
-// Distance from x to the nearest dorayaki or heart, so hazards are not placed on top of them
+// Distance from x to the nearest Doracake or heart, so hazards are not placed on top of them
 float distanceToCollectible(float x)
 {
     float best = 1000.0f;
@@ -5314,7 +5314,7 @@ void placeObstacles() {
             float range = slides ? OBSTACLE_SLIDE_RANGE : 0.0f;
             attempts++;
 
-            // keep clear of dorayaki and hearts (give up after many tries so placement always finishes)
+            // keep clear of Doracakes and hearts (give up after many tries so placement always finishes)
             valid = attempts > 1000 || distanceToCollectible(candidateX) >= HAZARD_CLEARANCE + range;
 
             for (int j = 0; j < i && valid; j++) {
